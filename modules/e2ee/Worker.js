@@ -70,14 +70,6 @@ const digestLength = {
     undefined: 4 // frame.type is not set on audio
 };
 
-// Salt used in key derivation
-// FIXME: We currently use the MUC room name for this which has the same lifetime
-// as this worker. While not (pseudo)random as recommended in
-// https://developer.mozilla.org/en-US/docs/Web/API/Pbkdf2Params
-// this is easily available and the same for all participants.
-// We currently do not enforce a minimum length of 16 bytes either.
-let _keySalt;
-
 /**
  * Derives a set of keys from the master key.
  * @param {Uint8Array} keyBytes - Value to derive key from
@@ -85,35 +77,39 @@ let _keySalt;
  *
  * See https://tools.ietf.org/html/draft-omara-sframe-00#section-4.3.1
  */
-async function deriveKeys(keyBytes, salt) {
+async function deriveKeys(keyBytes) {
     // https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey
     const material = await crypto.subtle.importKey('raw', keyBytes,
-        'PBKDF2', false, [ 'deriveBits', 'deriveKey' ]);
+        'HKDF', false, [ 'deriveBits', 'deriveKey' ]);
 
-    // https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/deriveKey#PBKDF2
+    const info = new ArrayBuffer();
+    const textEncoder = new TextEncoder();
+
+    // https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/deriveKey#HKDF
+    // https://developer.mozilla.org/en-US/docs/Web/API/HkdfParams
     const encryptionKey = await crypto.subtle.deriveKey({
-        name: 'PBKDF2',
-        salt,
-        iterations: 100000,
-        hash: 'SHA-256'
+        name: 'HKDF',
+        salt: textEncoder.encode('JFrameEncryptionKey'),
+        hash: 'SHA-256',
+        info
     }, material, {
         name: 'AES-CTR',
         length: 128
     }, false, [ 'encrypt', 'decrypt' ]);
     const authenticationKey = await crypto.subtle.deriveKey({
-        name: 'PBKDF2',
-        salt,
-        iterations: 100000,
-        hash: 'SHA-256'
+        name: 'HKDF',
+        salt: textEncoder.encode('JFrameAuthenticationKey'),
+        hash: 'SHA-256',
+        info
     }, material, {
         name: 'HMAC',
         hash: 'SHA-256'
     }, false, [ 'sign' ]);
     const saltKey = await crypto.subtle.deriveBits({
-        name: 'PBKDF2',
-        salt,
-        iterations: 100000,
-        hash: 'SHA-256'
+        name: 'HKDF',
+        salt: textEncoder.encode('JFrameSaltKey'),
+        hash: 'SHA-256',
+        info
     }, material, 128);
 
     return {
@@ -148,31 +144,18 @@ class Context {
     }
 
     /**
-     * Derives a per-participant set of keys.
-     * @param {Uint8Array} keyBytes - Value to derive key from
-     * @param {Uint8Array} salt - Salt used in key derivation
-     */
-    async deriveKeys(keyBytes, salt) {
-        const encoder = new TextEncoder();
-        const idBytes = encoder.encode(this._id);
-
-        // Separate both parts by a null byte to avoid ambiguity attacks.
-        const participantSalt = new Uint8Array(salt.byteLength + idBytes.byteLength + 1);
-
-        participantSalt.set(salt);
-        participantSalt.set(idBytes, salt.byteLength + 1);
-
-        return deriveKeys(keyBytes, participantSalt);
-    }
-
-    /**
-     * Sets a key and starts using it for encrypting.
+     * Sets a key, derive the different subkeys and starts using them for encryption or
+     * decryption.
      * @param {CryptoKey} key
      * @param {Number} keyIndex
      */
-    setKey(key, keyIndex) {
+    async setKey(key, keyIndex) {
         this._currentKeyIndex = keyIndex % this._cryptoKeyRing.length;
-        this._cryptoKeyRing[this._currentKeyIndex] = key;
+        if (key) {
+            this._cryptoKeyRing[this._currentKeyIndex] = await deriveKeys(key);
+        } else {
+            this._cryptoKeyRing[this._currentKeyIndex] = false;
+        }
         this._sendCount = 0n; // Reset the send count (bigint).
     }
 
@@ -381,9 +364,7 @@ const contexts = new Map(); // Map participant id => context
 onmessage = async event => {
     const { operation } = event.data;
 
-    if (operation === 'initialize') {
-        _keySalt = event.data.salt;
-    } else if (operation === 'encode') {
+    if (operation === 'encode') {
         const { readableStream, writableStream, participantId } = event.data;
 
         if (!contexts.has(participantId)) {
@@ -426,7 +407,7 @@ onmessage = async event => {
         const context = contexts.get(participantId);
 
         if (key) {
-            context.setKey(await context.deriveKeys(key, _keySalt), keyIndex);
+            context.setKey(key, keyIndex);
         } else {
             context.setKey(false, keyIndex);
         }
