@@ -60,7 +60,7 @@ const unencryptedBytes = {
 
 // Use truncated SHA-256 hashes, 80 bіts for video, 32 bits for audio.
 // This follows the same principles as DTLS-SRTP.
-const signatureOptions = {
+const authenticationTagOptions = {
     name: 'HMAC',
     hash: 'SHA-256'
 };
@@ -234,21 +234,22 @@ class Context {
 
                 newUint8.set(frameHeader); // copy first bytes.
                 newUint8.set(new Uint8Array(cipherText), unencryptedBytes[encodedFrame.type]); // add ciphertext.
-                // Leave some space for the signature. This is filled with 0s initially, similar to
+                // Leave some space for the authentication tag. This is filled with 0s initially, similar to
                 // STUN message-integrity described in https://tools.ietf.org/html/rfc5389#section-15.4
                 newUint8.set(frameTrailer, frameHeader.byteLength + cipherText.byteLength
                     + digestLength[encodedFrame.type]); // append trailer.
 
-                return crypto.subtle.sign(signatureOptions, this._cryptoKeyRing[keyIndex].authenticationKey,
-                    new Uint8Array(newData)).then(signature => {
-                    // set the truncated authentication tag.
-                    newUint8.set(new Uint8Array(signature, 0, digestLength[encodedFrame.type]),
+                return crypto.subtle.sign(authenticationTagOptions, this._cryptoKeyRing[keyIndex].authenticationKey,
+                    new Uint8Array(newData)).then(authTag => {
+                    // Set the truncated authentication tag.
+                    newUint8.set(new Uint8Array(authTag, 0, digestLength[encodedFrame.type]),
                         unencryptedBytes[encodedFrame.type] + cipherText.byteLength);
                     encodedFrame.data = newData;
 
                     return controller.enqueue(encodedFrame);
                 });
             }, e => {
+                // TODO: surface this to the app.
                 console.error(e);
 
                 // We are not enqueuing the frame here on purpose.
@@ -276,22 +277,23 @@ class Context {
             const counterLength = 1 + ((data[encodedFrame.data.byteLength - 1] >> 4) & 0x7);
             const frameHeader = new Uint8Array(encodedFrame.data, 0, unencryptedBytes[encodedFrame.type]);
 
-            // Extract the signature.
-            const signatureOffset = encodedFrame.data.byteLength - (digestLength[encodedFrame.type]
+            // Extract the truncated authentication tag.
+            const authTagOffset = encodedFrame.data.byteLength - (digestLength[encodedFrame.type]
                 + counterLength + 1);
-            const signature = encodedFrame.data.slice(signatureOffset, signatureOffset
+            const authTag = encodedFrame.data.slice(authTagOffset, authTagOffset
                 + digestLength[encodedFrame.type]);
 
-            // Set signature bytes to 0.
+            // Set authentication tag bytes to 0.
             const zeros = new Uint8Array(digestLength[encodedFrame.type]);
 
             data.set(zeros, encodedFrame.data.byteLength - (digestLength[encodedFrame.type] + counterLength + 1));
 
-            return crypto.subtle.sign(signatureOptions, this._cryptoKeyRing[keyIndex].authenticationKey,
-                encodedFrame.data).then(calculatedSignature => {
+            return crypto.subtle.sign(authenticationTagOptions, this._cryptoKeyRing[keyIndex].authenticationKey,
+                encodedFrame.data).then(calculatedTag => {
                 // Do truncated hash comparison.
-                if (!isArrayEqual(signature, calculatedSignature.slice(0, digestLength[encodedFrame.type]))) {
-                    console.error('signature mismatch', new Uint8Array(signature), new Uint8Array(calculatedSignature,
+                if (!isArrayEqual(authTag, calculatedTag.slice(0, digestLength[encodedFrame.type]))) {
+                    // TODO: surface this to the app.
+                    console.error('Authentication tag mismatch', new Uint8Array(authTag), new Uint8Array(calculatedTag,
                         0, digestLength[encodedFrame.type]));
 
                     return;
