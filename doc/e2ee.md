@@ -9,6 +9,30 @@ We are using a variant of
   https://tools.ietf.org/html/draft-omara-sframe-00
 that uses a trailer instead of a header.
 
+At a high level the encrypted frame format looks like this:
+```
+     +------------+------------------------------------------+^+
+     |unencrypted payload header (variable length)           | |
+   +^+------------+------------------------------------------+ |
+   | |                                                       | |
+   | |                                                       | |
+   | |                                                       | |
+   | |                                                       | |
+   | |                  Encrypted Frame                      | |
+   | |                                                       | |
+   | |                                                       | |
+   | |                                                       | |
+   | |                                                       | |
+   +^+-------------------------------------------------------+ +
+   | |                 Authentication Tag                    | |
+   | +---------------------------------------+-+-+-+-+-+-+-+-+ |
+   | |    CTR... (length=LEN)                |S|LEN  |0| KID | |
+   | +---------------------------------------+-+-+-+-+-+-+-+-+^|
+   |                                                           |
+   +----+Encrypted Portion            Authenticated Portion+---+
+```
+
+
 We do not encrypt the first few bytes of the packet that form the VP8 payload
   https://tools.ietf.org/html/rfc6386#section-9.1
 nor the Opus TOC byte
@@ -16,6 +40,7 @@ nor the Opus TOC byte
 
 This allows the decoder to understand the frame a bit more and makes it generate the fun looking garbage we see in the video.
 This also means the SFU does not know (ideally) that the content is end-to-end encrypted and there are no changes in the SFU required at all.
+
 
 ## Using workers
 
