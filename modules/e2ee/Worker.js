@@ -241,7 +241,7 @@ class Context {
 
                 return crypto.subtle.sign(signatureOptions, this._cryptoKeyRing[keyIndex].authenticationKey,
                     new Uint8Array(newData)).then(signature => {
-                    // set the signature.
+                    // set the truncated authentication tag.
                     newUint8.set(new Uint8Array(signature, 0, digestLength[encodedFrame.type]),
                         unencryptedBytes[encodedFrame.type] + cipherText.byteLength);
                     encodedFrame.data = newData;
