@@ -135,7 +135,7 @@ class Context {
         // A pointer to the currently used key.
         this._currentKeyIndex = -1;
 
-        // a per-sender counter that is used create the AES CTR.
+        // A per-sender counter that is used create the AES CTR.
         // Must be incremented on every frame that is sent, can be reset on
         // key changes.
         this._sendCount = 0n;
