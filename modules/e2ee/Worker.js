@@ -144,7 +144,7 @@ class Context {
     }
 
     /**
-     * Sets a key, derive the different subkeys and starts using them for encryption or
+     * Sets a key, derives the different subkeys and starts using them for encryption or
      * decryption.
      * @param {CryptoKey} key
      * @param {Number} keyIndex
